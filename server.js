@@ -347,14 +347,14 @@ app.get("/api", (req, res) => res.json({ message: "TEJAPRATAP QUIZ API v5.0", st
 // TEACHER AUTH — password verified server-side only
 // =====================================================
 app.post("/admin/verify-teacher", (req, res) => {
-    const TEACHER_PASSWORD = process.env.TEACHER_PASSWORD || process.env.ADMIN_RESET_PASSWORD;
+    const TEACHER_PASSWORD = process.env.TEACHER_PASSWORD || '11223344@Ttp#';
     if (!TEACHER_PASSWORD) return res.status(500).json({ error: "Teacher password not configured on server" });
     if (req.body.password !== TEACHER_PASSWORD) return res.status(403).json({ success: false, error: "Wrong password" });
     res.json({ success: true });
 });
 
 app.post("/admin/reset-all", (req, res) => {
-    const ADMIN_PASSWORD = process.env.ADMIN_RESET_PASSWORD;
+    const ADMIN_PASSWORD = process.env.ADMIN_RESET_PASSWORD || '11223344@Ttp#';
     if (!ADMIN_PASSWORD) return res.status(500).json({ error: "Admin password not configured on server" });
     if (req.body.confirmPassword !== ADMIN_PASSWORD) return res.status(403).json({ error: "Wrong password" });
     questions = []; studentAnswers = []; mediaFiles = []; studentPhones = {};
