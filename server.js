@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
+const { MongoClient } = require("mongodb");
 const app = express();
 
 app.use(cors());
@@ -9,52 +10,82 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 // =====================================================
-// DATA FILE PERSISTENCE (survives restarts)
+// MONGODB PERSISTENCE (works on Render free plan)
 // =====================================================
-const DATA_FILE = path.join(__dirname, "data.json");
+const MONGO_URI = process.env.MONGO_URI;
+let db = null;
 
-function loadData() {
+async function connectDB() {
+    if (!MONGO_URI) {
+        console.warn("⚠️  No MONGO_URI set — using in-memory only (data lost on restart)");
+        return;
+    }
     try {
-        if (fs.existsSync(DATA_FILE)) {
-            const raw = fs.readFileSync(DATA_FILE, "utf8");
-            return JSON.parse(raw);
-        }
-    } catch (e) { console.error("Load data error:", e.message); }
-    return {};
+        const client = new MongoClient(MONGO_URI);
+        await client.connect();
+        db = client.db("polyspark");
+        console.log("✅ MongoDB connected");
+    } catch (e) {
+        console.error("❌ MongoDB connection failed:", e.message);
+    }
 }
 
-function saveData() {
+async function loadData() {
+    if (!db) return {};
     try {
-        fs.writeFileSync(DATA_FILE, JSON.stringify({
-            questions, studentAnswers, mediaFiles, studentPhones,
-            bulkSchedule, studentScores, studentStreaks,
-            wordItems, affairsItems,
-            mediaSchedule, wordSchedule, affairsSchedule,
-            speakingTopics, speakingReports
-        }, null, 2));
+        const doc = await db.collection("appdata").findOne({ _id: "main" });
+        return doc || {};
+    } catch (e) { console.error("Load data error:", e.message); return {}; }
+}
+
+async function saveData() {
+    if (!db) return;
+    try {
+        await db.collection("appdata").updateOne(
+            { _id: "main" },
+            { $set: {
+                questions, studentAnswers, mediaFiles, studentPhones,
+                bulkSchedule, studentScores, studentStreaks,
+                wordItems, affairsItems,
+                mediaSchedule, wordSchedule, affairsSchedule,
+                speakingTopics, speakingReports
+            }},
+            { upsert: true }
+        );
     } catch (e) { console.error("Save data error:", e.message); }
 }
 
 // Auto-save every 30 seconds
 setInterval(saveData, 30000);
 
-const saved = loadData();
-let questions      = saved.questions      || [];
-let studentAnswers = saved.studentAnswers || [];
-let mediaFiles     = saved.mediaFiles     || [];
-let studentPhones  = saved.studentPhones  || {};
-let bulkSchedule   = saved.bulkSchedule   || null;
-let studentScores  = saved.studentScores  || {};
-let studentStreaks  = saved.studentStreaks || {};
-let wordItems      = saved.wordItems      || [];  // Word of the Day
-let affairsItems   = saved.affairsItems   || [];  // Current Affairs
-let mediaSchedule  = saved.mediaSchedule  || null;
-let wordSchedule   = saved.wordSchedule   || null;
-let affairsSchedule = saved.affairsSchedule || null;
-let speakingTopics   = saved.speakingTopics   || [];  // Speaking Practice
-let speakingReports  = saved.speakingReports  || [];  // Student Speaking Reports
+// =====================================================
+// BOOT — connect DB then start server
+// =====================================================
+let questions = [], studentAnswers = [], mediaFiles = [], studentPhones = {};
+let bulkSchedule = null, studentScores = {}, studentStreaks = {};
+let wordItems = [], affairsItems = [];
+let mediaSchedule = null, wordSchedule = null, affairsSchedule = null;
+let speakingTopics = [], speakingReports = [];
 
-console.log(`✅ Data loaded: ${questions.length} questions, ${studentAnswers.length} answers, ${Object.keys(studentPhones).length} students`);
+async function boot() {
+    await connectDB();
+    const saved = await loadData();
+    questions       = saved.questions       || [];
+    studentAnswers  = saved.studentAnswers  || [];
+    mediaFiles      = saved.mediaFiles      || [];
+    studentPhones   = saved.studentPhones   || {};
+    bulkSchedule    = saved.bulkSchedule    || null;
+    studentScores   = saved.studentScores   || {};
+    studentStreaks   = saved.studentStreaks  || {};
+    wordItems       = saved.wordItems       || [];
+    affairsItems    = saved.affairsItems    || [];
+    mediaSchedule   = saved.mediaSchedule   || null;
+    wordSchedule    = saved.wordSchedule    || null;
+    affairsSchedule = saved.affairsSchedule || null;
+    speakingTopics  = saved.speakingTopics  || [];
+    speakingReports = saved.speakingReports || [];
+    console.log(`✅ Data loaded: ${questions.length} questions, ${studentAnswers.length} answers, ${Object.keys(studentPhones).length} students`);
+}
 
 // =====================================================
 // BULK SCHEDULE
@@ -848,10 +879,13 @@ app.use((req, res) => res.status(404).json({ error: "Not found", path: req.path 
 app.use((err, req, res, next) => res.status(500).json({ error: err.message }));
 
 const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log("TEJAPRATAP QUIZ SERVER v5.0 on port " + PORT);
-    console.log("App: http://localhost:" + PORT);
-});
-process.on("SIGTERM", () => { saveData(); server.close(() => console.log("Closed")); });
-process.on("SIGINT", () => { saveData(); process.exit(0); });
+boot().then(() => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
+        console.log("TEJAPRATAP QUIZ SERVER v5.0 on port " + PORT);
+        console.log("App: http://localhost:" + PORT);
+    });
+    process.on("SIGTERM", async () => { await saveData(); server.close(() => console.log("Closed")); });
+    process.on("SIGINT",  async () => { await saveData(); process.exit(0); });
+}).catch(e => { console.error("Boot failed:", e); process.exit(1); });
+
 module.exports = app;
