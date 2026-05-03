@@ -30,7 +30,7 @@ function saveData() {
             bulkSchedule, studentScores, studentStreaks,
             wordItems, affairsItems,
             mediaSchedule, wordSchedule, affairsSchedule,
-            speakingTopics
+            speakingTopics, speakingReports
         }, null, 2));
     } catch (e) { console.error("Save data error:", e.message); }
 }
@@ -51,7 +51,8 @@ let affairsItems   = saved.affairsItems   || [];  // Current Affairs
 let mediaSchedule  = saved.mediaSchedule  || null;
 let wordSchedule   = saved.wordSchedule   || null;
 let affairsSchedule = saved.affairsSchedule || null;
-let speakingTopics  = saved.speakingTopics  || [];  // Speaking Practice
+let speakingTopics   = saved.speakingTopics   || [];  // Speaking Practice
+let speakingReports  = saved.speakingReports  || [];  // Student Speaking Reports
 
 console.log(`✅ Data loaded: ${questions.length} questions, ${studentAnswers.length} answers, ${Object.keys(studentPhones).length} students`);
 
@@ -360,7 +361,7 @@ app.post("/admin/reset-all", (req, res) => {
     questions = []; studentAnswers = []; mediaFiles = []; studentPhones = {};
     bulkSchedule = null; studentScores = {}; studentStreaks = {};
     wordItems = []; affairsItems = []; mediaSchedule = null; wordSchedule = null; affairsSchedule = null;
-    speakingTopics = [];
+    speakingTopics = []; speakingReports = [];
     saveData();
     res.json({ success: true, message: "All data reset" });
 });
@@ -505,6 +506,22 @@ app.put("/speaking/:id/activate", (req, res) => {
 // =====================================================
 // GRAMMAR ANALYZER (Rule-Based — No API Key Needed)
 // =====================================================
+
+// Student submits speaking report after analysis
+app.post("/speaking/report", (req, res) => {
+    const { name, pin, transcript, topic, score, wordCount, errors, feedback, time } = req.body;
+    if (!transcript) return res.status(400).json({ error: "Transcript required" });
+    const report = { id: Date.now(), name: name||'Unknown', pin: pin||'', transcript, topic: topic||'', score: score||0, wordCount: wordCount||0, errors: errors||[], feedback: feedback||'', time: time||Date.now() };
+    speakingReports.unshift(report);
+    if (speakingReports.length > 200) speakingReports = speakingReports.slice(0, 200); // keep last 200
+    saveData();
+    res.json({ success: true });
+});
+
+// Teacher fetches all student speaking reports
+app.get("/speaking/reports", (req, res) => {
+    res.json(speakingReports);
+});
 function analyzeGrammar(text) {
     if (!text || !text.trim()) return { errors: [], score: 0, feedback: "No text provided." };
 
