@@ -1918,21 +1918,22 @@ async function deleteSpeakTopic(id){
 async function loadTSpeakReports(){
   const box=document.getElementById('tSpeakReports'); if(!box) return;
   box.innerHTML='<div class="spin-wrap"><div class="spinner"></div></div>';
-  const stored=JSON.parse(localStorage.getItem('speakReports')||'[]');
-  if(!stored.length){box.innerHTML='<div class="inf">No student reports yet. Students submit their speaking results.</div>';return;}
-  // Sort by time desc
-  stored.sort((a,b)=>b.time-a.time);
-  box.innerHTML=stored.map(r=>`
-    <div style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:11px 13px;margin-bottom:9px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
-        <span style="font-weight:700;font-size:13px;color:#1e293b">${escHtml(r.name||'Unknown')}</span>
-        <span style="font-size:18px;font-weight:800;color:${r.score>=75?'#16a34a':r.score>=50?'#d97706':'#ef4444'}">${r.score}/100</span>
-      </div>
-      <div style="font-size:11px;color:#64748b;margin-bottom:6px">📋 ${escHtml(r.topic||'')} &nbsp;·&nbsp; ${r.wordCount||0} words &nbsp;·&nbsp; ${new Date(r.time||Date.now()).toLocaleString()}</div>
-      <div style="font-size:12px;color:#475569;font-style:italic;margin-bottom:6px">"${escHtml((r.transcript||'').substring(0,120))}${(r.transcript||'').length>120?'…':''}"</div>
-      ${r.errors&&r.errors.length?`<div style="font-size:11px;color:#ef4444;font-weight:600">⚠️ ${r.errors.length} grammar issue(s)</div>`:'<div style="font-size:11px;color:#16a34a;font-weight:600">✅ No grammar errors</div>'}
-      <div style="font-size:11px;color:#475569;margin-top:3px">📝 ${escHtml(r.feedback||'')}</div>
-    </div>`).join('');
+  try{
+    const stored=await GET('/speaking/reports');
+    if(!stored||!stored.length){box.innerHTML='<div class="inf">No student reports yet. Students submit their speaking results.</div>';return;}
+    stored.sort((a,b)=>b.time-a.time);
+    box.innerHTML=stored.map(r=>`
+      <div style="background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:11px 13px;margin-bottom:9px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+          <span style="font-weight:700;font-size:13px;color:#1e293b">${escHtml(r.name||'Unknown')}</span>
+          <span style="font-size:18px;font-weight:800;color:${r.score>=75?'#16a34a':r.score>=50?'#d97706':'#ef4444'}">${r.score}/100</span>
+        </div>
+        <div style="font-size:11px;color:#64748b;margin-bottom:6px">📋 ${escHtml(r.topic||'')} &nbsp;·&nbsp; ${r.wordCount||0} words &nbsp;·&nbsp; ${new Date(r.time||Date.now()).toLocaleString()}</div>
+        <div style="font-size:12px;color:#475569;font-style:italic;margin-bottom:6px">"${escHtml((r.transcript||'').substring(0,120))}${(r.transcript||'').length>120?'…':''}"</div>
+        ${r.errors&&r.errors.length?`<div style="font-size:11px;color:#ef4444;font-weight:600">⚠️ ${r.errors.length} grammar issue(s)</div>`:'<div style="font-size:11px;color:#16a34a;font-weight:600">✅ No grammar errors</div>'}
+        <div style="font-size:11px;color:#475569;margin-top:3px">📝 ${escHtml(r.feedback||'')}</div>
+      </div>`).join('');
+  }catch(e){box.innerHTML='<div class="inf">Failed to load reports.</div>';}
 }
 
 // ═══════════════════════════════════════════════════
@@ -2013,6 +2014,7 @@ function startSpeaking(){
   if(!SR){status.textContent='⚠️ No mic API — type below';return;}
   _spRec=new SR();
   _spRec.continuous=true; _spRec.interimResults=true; _spRec.lang='en-IN';
+  let _spActive = true; // flag to control restart
   _spRec.onresult=e=>{
     let interim='', final='';
     for(let i=e.resultIndex;i<e.results.length;i++){
@@ -2023,14 +2025,26 @@ function startSpeaking(){
     liveTxt.textContent=_spTranscript+(interim?'['+interim+']':'');
     const ta=document.getElementById('spManual'); if(ta) ta.value=_spTranscript;
   };
-  _spRec.onerror=ev=>{status.textContent='Mic error: '+ev.error;};
-  _spRec.onend=()=>{if(stopBtn&&stopBtn.style.display!=='none') _spRec.start();};
+  _spRec.onerror=ev=>{
+    if(ev.error==='no-speech') return; // ignore silence, just restart
+    status.textContent='Mic error: '+ev.error;
+    _spActive=false;
+  };
+  _spRec.onend=()=>{
+    // Only restart if user hasn't pressed Stop
+    if(_spActive && stopBtn && stopBtn.style.display!=='none'){
+      try{ _spRec.start(); }catch(e){}
+    }
+  };
   try{_spRec.start();}catch(e){status.textContent='Could not start mic.';}
 }
 
 function stopSpeaking(){
   clearInterval(_spTimer); _spTimer=null;
-  if(_spRec){try{_spRec.onend=null;_spRec.stop();}catch(e){} _spRec=null;}
+  if(_spRec){
+    try{_spRec.onend=null; _spRec.onerror=null; _spRec.stop();}catch(e){}
+    _spRec=null;
+  }
   const startBtn=document.getElementById('spStartBtn');
   const stopBtn=document.getElementById('spStopBtn');
   const status=document.getElementById('spStatus');
@@ -2061,10 +2075,9 @@ async function analyzeSpeak(){
     const d=await fetch(API+'/speaking/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
     if(d.error){res.innerHTML='<div style="color:#ef4444">'+escHtml(d.error)+'</div>';return;}
     renderSpeakResult(d);
-    // Save report to localStorage for teacher to see
-    const reports=JSON.parse(localStorage.getItem('speakReports')||'[]');
-    reports.push({name:MY_NAME||'Student',transcript:text,topic:_spTopic?_spTopic.topic:'',score:d.score,wordCount:d.wordCount,errors:d.errors,feedback:d.feedback,time:Date.now()});
-    localStorage.setItem('speakReports',JSON.stringify(reports.slice(-50)));
+    // Save report to server so teacher can see it
+    const report={name:MY_NAME||'Student',pin:ME||'',transcript:text,topic:_spTopic?_spTopic.topic:'',score:d.score,wordCount:d.wordCount,errors:d.errors,feedback:d.feedback,time:Date.now()};
+    fetch(API+'/speaking/report',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(report)}).catch(()=>{});
   }catch(e){res.innerHTML='<div style="color:#ef4444;font-size:13px">Analysis failed. Please check your connection.</div>';}
 }
 
