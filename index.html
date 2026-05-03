@@ -1939,7 +1939,7 @@ async function loadTSpeakReports(){
 // ═══════════════════════════════════════════════════
 // SPEAKING PRACTICE — STUDENT
 // ═══════════════════════════════════════════════════
-let _spRec=null, _spTimer=null, _spSecs=0, _spTranscript='', _spTopic=null;
+let _spRec=null, _spTimer=null, _spSecs=0, _spTranscript='', _spTopic=null, _spActive=false;
 
 async function loadSpeakStudent(){
   const box=document.getElementById('speakBody'); if(!box) return;
@@ -1996,14 +1996,22 @@ function startSpeaking(){
   const status=document.getElementById('spStatus');
   const liveTxt=document.getElementById('spLiveTxt');
   if(!startBtn) return;
-  startBtn.style.display='none'; stopBtn.style.display='block';
+
+  // Reset everything cleanly
+  _spActive=true;
   _spSecs=0; _spTranscript='';
-  status.textContent='🔴 Recording…';
   liveTxt.textContent='';
+  const ta=document.getElementById('spManual'); if(ta) ta.value='';
+  const res=document.getElementById('spResult'); if(res) res.innerHTML='';
+
+  startBtn.style.display='none'; stopBtn.style.display='block';
+  status.textContent='🔴 Recording…';
+
+  clearInterval(_spTimer);
   _spTimer=setInterval(()=>{
     _spSecs++;
     const m=Math.floor(_spSecs/60), s=_spSecs%60;
-    document.getElementById('spTimerBox').textContent=m+':'+(s<10?'0':'')+s;
+    const tb=document.getElementById('spTimerBox'); if(tb) tb.textContent=m+':'+(s<10?'0':'')+s;
     if(_spTopic && _spSecs>=_spTopic.duration*60){
       status.textContent='⏱️ Time up! Stopping…';
       stopSpeaking();
@@ -2012,9 +2020,14 @@ function startSpeaking(){
 
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
   if(!SR){status.textContent='⚠️ No mic API — type below';return;}
+
+  if(_spRec){try{_spRec.onend=null;_spRec.onerror=null;_spRec.stop();}catch(e){} _spRec=null;}
+
   _spRec=new SR();
-  _spRec.continuous=true; _spRec.interimResults=true; _spRec.lang='en-IN';
-  let _spActive = true; // flag to control restart
+  _spRec.continuous=true;
+  _spRec.interimResults=true;
+  _spRec.lang='en-IN';
+
   _spRec.onresult=e=>{
     let interim='', final='';
     for(let i=e.resultIndex;i<e.results.length;i++){
@@ -2025,21 +2038,24 @@ function startSpeaking(){
     liveTxt.textContent=_spTranscript+(interim?'['+interim+']':'');
     const ta=document.getElementById('spManual'); if(ta) ta.value=_spTranscript;
   };
+
   _spRec.onerror=ev=>{
-    if(ev.error==='no-speech') return; // ignore silence, just restart
+    if(ev.error==='no-speech'||ev.error==='aborted') return;
     status.textContent='Mic error: '+ev.error;
     _spActive=false;
   };
+
   _spRec.onend=()=>{
-    // Only restart if user hasn't pressed Stop
-    if(_spActive && stopBtn && stopBtn.style.display!=='none'){
-      try{ _spRec.start(); }catch(e){}
+    if(_spActive){
+      try{_spRec.start();}catch(e){_spActive=false;}
     }
   };
-  try{_spRec.start();}catch(e){status.textContent='Could not start mic.';}
+
+  try{_spRec.start();}catch(e){status.textContent='Could not start mic. Allow microphone permission.'; _spActive=false;}
 }
 
 function stopSpeaking(){
+  _spActive=false; // MUST be first — prevents onend from restarting
   clearInterval(_spTimer); _spTimer=null;
   if(_spRec){
     try{_spRec.onend=null; _spRec.onerror=null; _spRec.stop();}catch(e){}
